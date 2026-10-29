@@ -1,6 +1,6 @@
 # Self-Healing Machines (HealLoop) — closed-loop predictive maintenance on NASA C-MAPSS (FD001–FD004)
 
-Team Teliport · Case Study 1 (Tata ELXSI) — *ingest → detect degradation → estimate calibrated RUL → triage → auto-create work order; engineers handle exceptions.*
+Team Teliport · Case Study 1 — *ingest → detect degradation → estimate calibrated RUL → triage → auto-create work order; engineers handle exceptions.*
 
 This repository turns the Round-1 design deck into a **working, end-to-end proof of concept** on all four C-MAPSS subsets.
 No LLM and no agent framework anywhere: the agent is plain Python rules. Open-source stack only
