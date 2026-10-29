@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+mlflow/
+artifacts/
+outputs/
+data/raw/
+
+# case-study material (not part of the repository)
+*.pdf
+*.pptx

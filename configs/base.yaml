@@ -1,0 +1,131 @@
+# Base configuration shared by every C-MAPSS subset.
+# Per-subset files (FD001.yaml ...) are deep-merged on top of this one.
+# All thresholds marked "candidate" are validation-tuned policy candidates, NOT measured results.
+
+seed: 42
+
+paths:
+  raw_dir: data/raw
+  artifacts_dir: artifacts
+  outputs_dir: outputs
+  mlflow_dir: mlflow
+
+mlflow:
+  experiment: self-healing-machines
+  registry_name: "shm-rul-{subset}"
+
+cleaning:
+  max_ffill_gap: 3          # causal forward-fill allowed for gaps up to this many cycles
+  long_gap_hold: 5          # a long gap keeps the data flagged "bad" for this many cycles afterwards
+  stale_repeat: 3           # identical consecutive rows >= this many -> stale feed
+  median_window: 3          # causal rolling-median noise filter (1 disables)
+  range_margin: 0.25        # tolerance beyond train min/max (fraction of train range)
+  range_violation_frac: 0.30  # share of kept sensors outside range -> bad data
+  min_within_regime_std: 1.0e-6  # sensors with train within-regime std below this are dropped
+
+regime:
+  n_regimes: 1
+  ood_quantile: 0.9995      # train distance quantile defining "known" operating regimes
+  ood_margin: 1.5           # multiplier on that quantile -> unseen-regime threshold
+
+features:
+  windows: [5, 10, 20, 30]  # causal windows (cycles); shorter-window fallback at start-up
+  ewma_span: 10
+
+labels:
+  rul_cap: 125              # piece-wise linear RUL target; disclosed modelling choice
+
+split:                      # grouped by ENGINE ID within the subset
+  calib_frac: 0.15          # conformal calibration engines
+  val_frac: 0.20            # validation engines (early stopping, healthy ECDF, policy tuning)
+
+anomaly:
+  healthy_cycles: 20        # first N cycles of train engines = healthy proxy
+  input_stat: mean10        # causal 10-cycle mean of the cleaned sensors feeds the detectors
+  if_trees: 200
+  pca_variance: 0.95
+  fuse_weights: [0.5, 0.5]  # [isolation forest, PCA-SPE]
+  early_life_cycles: 50
+  early_alert_budget: 0.25  # tolerated early-life alert onsets per engine when tuning
+  candidates:
+    A: [0.97, 0.98, 0.99, 0.995]
+    persistence: [[3, 5], [2, 3], [4, 5]]   # k-of-n cycles
+  default: {A: 0.99, k: 3, n: 5}
+
+rul:
+  quantiles: [0.1, 0.5, 0.9]
+  near_failure:
+    threshold: 30           # windows with true RUL <= this are "rare-risk"
+    weights: [1.0, 3.0]     # candidate sample weights, chosen on validation engines
+  lgbm:
+    n_estimators: 600
+    learning_rate: 0.05
+    num_leaves: 31
+    min_child_samples: 40
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.5
+    reg_lambda: 1.0
+    early_stopping_rounds: 40
+    n_jobs: -1
+
+conformal:
+  alpha: 0.2                # nominal 80% P10-P90 interval (CQR on held-out calibration engines)
+  # "Endpoint-like" calibration/validation distribution: one random cut per engine, i.e. rows with at least
+  # `min_cycle` cycles of history and RUL <= `horizon`, every engine weighted equally.  (C-MAPSS test engines are
+  # truncated histories of >= 31 cycles; calibrating on ALL rows would be dominated by trivially covered healthy rows.)
+  min_cycle: 31
+  horizon: 150
+
+policy:                     # candidate defaults from the design deck; tuned in `tune_policy`
+  cutoffs: {critical: 15, high: 40, medium: 80}
+  width_star: 60.0
+  conflict_healthy_p10: 110
+  warmup_rows: 10           # < this many rows of history: no anomaly flags / no uncertainty review (windows still filling)
+  deescalate_after: 5
+  reopen_cooldown: 10
+  due: {P1: 0, P2: 10, review: 5}
+  service_interval: 50      # P3 -> next scheduled service (next multiple of this cycle count)
+  review_priority: P3
+  tuning:
+    grid:
+      critical: [10, 15, 20]
+      high: [30, 40, 50]
+      medium: [70, 80, 90]
+      width_q: [0.70, 0.80, 0.85, 0.90, 0.95, 0.98]   # W* candidates = quantiles of validation interval widths
+    review_budget_per_engine: 0.5   # W* = tightest candidate keeping exception (REVIEW) onsets within this budget
+    risk_horizon: 30        # RUL <= this must be HIGH/CRITICAL (recall target)
+    false_alarm_rul: 80     # P1/P2 while true RUL > this = false alarm
+    late_lead_cycles: 10    # first P1/P2 later than this many cycles before failure = late
+    cost:                   # asymmetric on purpose: a late/missed alert is worse than an early one
+      late_engine: 20.0
+      miss_recall: 5.0
+      false_alarm: 10.0
+      early_alerts: 0.5
+      tickets: 0.1
+
+retrain:
+  reserve_fraction: 0.25    # share of TRAIN engines held back from the first model and later "released" as completed,
+                            # labelled run-to-failure histories (the official test set is never used for training)
+  gate:
+    min_score_gain: 0.01    # challenger must cut the NASA score by at least this fraction ...
+    max_rmse_regress: 0.02  # ... without worsening RMSE by more than this fraction ...
+    max_coverage_drop: 0.05 # ... or letting P10-P90 coverage fall more than this below the champion
+
+monitor:
+  psi_warn: 0.10
+  psi_alert: 0.25
+  reference_cycles: 20      # compare incoming early-life cycles against train early-life cycles
+  min_rows: 200
+  quality_warn_frac: 0.02
+  quality_alert_frac: 0.10
+
+triage_demo:
+  faults:                   # fault injection for the "faults" replay scenario (engine ids refer to the TEST set)
+    gap_engine: 3           # 8 cycles never arrive (long gap) -> REVIEW
+    stale_engine: 5         # frozen feed -> REVIEW
+    regime_engine: 7        # unseen operating regime -> REVIEW
+    duplicate_engine: 11    # duplicate row -> rejected at ingest -> REVIEW
+    drift_sensor: s11       # sensor offset (multiples of the sensor's std) in a share of the fleet -> drift monitor
+    drift_offset_sd: 3.0
+    drift_fraction: 0.5

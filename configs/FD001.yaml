@@ -1,0 +1,3 @@
+# FD001 - baseline: 1 operating condition, 1 fault mode (HPC degradation)
+regime:
+  n_regimes: 1

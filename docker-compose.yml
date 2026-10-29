@@ -1,0 +1,38 @@
+# One command:  docker compose up --build
+# Generated state (models, tickets, MLflow) lives in named volumes so host-OS paths never leak into the MLflow registry.
+x-app: &app
+  build: .
+  image: self-healing-machines:latest
+  environment:
+    SELFHEAL_HOME: /app
+  volumes:
+    - ./data:/app/data            # raw NASA C-MAPSS files (downloaded automatically if missing)
+    - shm_artifacts:/app/artifacts
+    - shm_outputs:/app/outputs
+    - shm_mlflow:/app/mlflow
+
+services:
+  pipeline:
+    <<: *app
+    command: ["run-all"]
+
+  dashboard:
+    <<: *app
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8501"]
+    ports: ["8501:8501"]
+    depends_on:
+      pipeline:
+        condition: service_completed_successfully
+
+  mlflow:
+    <<: *app
+    command: ["mlflow-ui", "--host", "0.0.0.0", "--port", "5000"]
+    ports: ["5000:5000"]
+    depends_on:
+      pipeline:
+        condition: service_completed_successfully
+
+volumes:
+  shm_artifacts:
+  shm_outputs:
+  shm_mlflow:
